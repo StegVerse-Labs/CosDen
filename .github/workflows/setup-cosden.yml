@@ -1,0 +1,35 @@
+name: Setup CosDen Structure
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Make script executable
+        run: chmod +x setup_cosden_structure.sh
+
+      - name: Run CosDen setup script
+        run: ./setup_cosden_structure.sh
+
+      - name: Commit and push changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "Initialize CosDen docs tree"
+            git push
+          else
+            echo "No changes to commit."
+          fi
