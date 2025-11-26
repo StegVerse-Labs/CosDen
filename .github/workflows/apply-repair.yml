@@ -20,7 +20,7 @@ jobs:
       - name: Checkout StegDB
         uses: actions/checkout@v4
         with:
-          repository: StegVerse/StegDB
+          repository: StegVerse-Labs/StegDB
           path: stegdb
           fetch-depth: 0
 
