@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
 """
-CosDenOS Repository Structure Validator
----------------------------------------
+CosDenOS Repository Structure + Metadata Validator
+--------------------------------------------------
 
 Run manually:
 
     python tools/validate_cosden_structure.py
 
-Or set as a CI check in GitHub Actions.
-
-This script validates:
-
-- Required directories exist
-- Required files exist
-- No files exist in invalid locations
-- Known module paths are correctly structured
-- CosDenOS imports resolve cleanly
+What it does:
+- Validates required directories and files exist
+- Flags unexpected entries
+- Computes SHA-256 hashes of repo files
+- Writes metadata to meta/files.jsonl for DB/analytics use
 """
 
 import os
 import sys
-import importlib.util
+import json
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
+import importlib.util
 
 ROOT = Path(__file__).resolve().parents[1]
 
 # --------------------------
-# CONFIGURATION: EXPECTED TREE
+# CONFIGURATION
 # --------------------------
 
 REQUIRED_DIRS = {
@@ -35,6 +34,7 @@ REQUIRED_DIRS = {
     "src/CosDenOS/clients",
     ".github",
     ".github/workflows",
+    "tools",
 }
 
 REQUIRED_FILES = {
@@ -49,6 +49,7 @@ REQUIRED_FILES = {
     "src/CosDenOS/clients/python_client.py",
     "src/CosDenOS/clients/__init__.py",
     ".github/workflows/cosden-docker.yml",
+    "tools/validate_cosden_structure.py",
 }
 
 ALLOWED_EXTRA_DIRS = {
@@ -59,6 +60,9 @@ ALLOWED_EXTRA_DIRS = {
     "data",
 }
 
+# Where to write file metadata
+META_DIR = ROOT / "meta"
+META_FILE = META_DIR / "files.jsonl"
 
 # --------------------------
 # Console helpers
@@ -70,7 +74,7 @@ def red(msg): return f"\033[91m{msg}\033[0m"
 
 
 # --------------------------
-# Validator functions
+# Validators
 # --------------------------
 
 def check_required_dirs():
@@ -90,13 +94,11 @@ def check_required_files():
 
 
 def find_unexpected_structure():
-    """Scan repo for unknown top-level entries and misplaced files."""
     errs = []
 
-    # Allowed top-level entries
     allowed_root = {
-        "src", ".github", "tools", "README.md", "pyproject.toml", "Dockerfile",
-        ".gitignore", "LICENSE"
+        "src", ".github", "tools", "README.md", "pyproject.toml",
+        "Dockerfile", ".gitignore", "LICENSE", "meta",
     }
 
     for item in ROOT.iterdir():
@@ -105,7 +107,6 @@ def find_unexpected_structure():
         if item.is_file() and item.name not in allowed_root:
             errs.append(f"Unexpected file at root: {item.name}")
 
-    # Scan src/CosDenOS for misplaced files
     cosden_root = ROOT / "src" / "CosDenOS"
     if cosden_root.exists():
         for item in cosden_root.iterdir():
@@ -116,15 +117,15 @@ def find_unexpected_structure():
 
 
 def try_import_cosden():
-    """
-    Ensure CosDenOS can be imported cleanly.
-    """
     errs = []
     cosden_path = ROOT / "src" / "CosDenOS"
+    init_file = cosden_path / "__init__.py"
     if not cosden_path.exists():
         return ["CosDenOS directory missing — cannot validate imports"]
+    if not init_file.exists():
+        return ["CosDenOS/__init__.py missing — cannot import package"]
 
-    spec = importlib.util.spec_from_file_location("CosDenOS", cosden_path / "__init__.py")
+    spec = importlib.util.spec_from_file_location("CosDenOS", init_file)
     if spec is None:
         return ["Failed to construct import spec for CosDenOS"]
 
@@ -138,11 +139,80 @@ def try_import_cosden():
 
 
 # --------------------------
+# Hashing + metadata
+# --------------------------
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def build_file_metadata():
+    """
+    Walk src/ and tools/, hash files, and write metadata to meta/files.jsonl.
+    """
+    META_DIR.mkdir(exist_ok=True)
+    if META_FILE.exists():
+        META_FILE.unlink()
+
+    now = datetime.now(timezone.utc).isoformat()
+    repo_name = ROOT.name
+
+    issues_index = build_issues_index()
+
+    with META_FILE.open("w", encoding="utf-8") as out:
+        for rel_root in ["src", "tools"]:
+            base = ROOT / rel_root
+            if not base.exists():
+                continue
+            for path in base.rglob("*"):
+                if path.is_dir():
+                    continue
+                rel_path = path.relative_to(ROOT).as_posix()
+                file_hash = sha256_file(path)
+                size = path.stat().st_size
+
+                meta = {
+                    "repo": repo_name,
+                    "path": rel_path,
+                    "sha256": file_hash,
+                    "size_bytes": size,
+                    "timestamp": now,
+                    "valid_location": True,
+                    "issues": [],
+                }
+
+                if rel_path not in REQUIRED_FILES and not rel_path.startswith("src/CosDenOS") and not rel_path.startswith("tools/"):
+                    meta["valid_location"] = False
+                    meta["issues"].append("unexpected_location")
+
+                extra_issues = issues_index.get(rel_path)
+                if extra_issues:
+                    meta["valid_location"] = False
+                    meta["issues"].extend(extra_issues)
+
+                out.write(json.dumps(meta) + "\n")
+
+
+def build_issues_index():
+    """
+    Build a quick mapping of file -> [issues] based on the structure checks.
+    For now, we only use it to tag unexpected files/directories at a coarse level.
+    """
+    index = {}
+    # We could refine this to match exact paths; for now, we leave it simple.
+    return index
+
+
+# --------------------------
 # Main Execution
 # --------------------------
 
 def main():
-    print("\n🔍 Validating CosDenOS repo structure...\n")
+    print("\n🔍 Validating CosDenOS repo structure + generating metadata...\n")
 
     errors = []
     checks = [
@@ -161,6 +231,10 @@ def main():
             errors.extend(result)
         else:
             print("   " + green("✓ OK"))
+
+    print("\n• File hashing & metadata...")
+    build_file_metadata()
+    print("   " + green(f"✓ Wrote metadata to {META_FILE.relative_to(ROOT)}"))
 
     print("\n-----------------------------------")
     if errors:
