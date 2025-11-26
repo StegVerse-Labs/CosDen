@@ -12,7 +12,7 @@ class CosDenClientConfig:
     """
     Configuration for talking to a CosDenOS API instance.
     """
-    base_url: str  # e.g. "http://localhost:8000" or "https://cosden.stegverse.com"
+    base_url: str  # e.g. "http://localhost:8000" or "https://cosden.stegverse.internal"
     timeout_seconds: float = 10.0
 
 
@@ -34,7 +34,7 @@ class CosDenClient:
         self.config = config
 
     # ------------------------------
-    # Low-level helpers
+    # Internal helpers
     # ------------------------------
 
     def _url(self, path: str) -> str:
@@ -64,7 +64,7 @@ class CosDenClient:
         return self._handle_response(resp)
 
     # ------------------------------
-    # High-level plan endpoint
+    # /plan endpoint
     # ------------------------------
 
     def plan(
@@ -99,7 +99,7 @@ class CosDenClient:
         return self._handle_response(resp)
 
     # ------------------------------
-    # Lower-level simulate endpoint
+    # /simulate endpoint
     # ------------------------------
 
     def simulate(
