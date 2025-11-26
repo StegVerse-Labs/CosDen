@@ -55,7 +55,7 @@ jobs:
           canonical_root = stegdb_root / plan["canonical_root"]
 
           for action in plan["actions"]:
-              if action["type"] != "write_file":
+              if action.get("type") != "write_file":
                   continue
               canonical_rel = action["canonical_relpath"]
               target_rel = action["target_path"]
