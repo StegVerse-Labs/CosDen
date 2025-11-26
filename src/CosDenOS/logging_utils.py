@@ -12,11 +12,21 @@ def log_event(
     extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
-    Minimal structured logger.
-    Writes a JSON line to stdout so that containers / gateways
-    can parse logs easily.
+    Minimal structured logger for CosDenOS.
+
+    Writes a single JSON line to stdout so that containers / gateways / log
+    collectors can parse events consistently.
+
+    Example output:
+    {
+      "ts": "2025-11-25T12:34:56.789012Z",
+      "level": "INFO",
+      "event": "plan_request",
+      "endpoint": "/plan",
+      "age_years": 35
+    }
     """
-    record = {
+    record: Dict[str, Any] = {
         "ts": datetime.utcnow().isoformat() + "Z",
         "level": level.upper(),
         "event": event,
