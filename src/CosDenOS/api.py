@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from . import CosDenOS
 from .ai_planner import CosmeticPlannerAgent
 from .user_profile import CosmeticUserProfile
-from .errors import CosDenError, AgeGateError, UnknownProductError
+from .errors import CosDenError
 from .api_models import (
     PlanRequest,
     PlanResponse,
@@ -15,7 +15,7 @@ from .api_models import (
     SimulationEffect,
     InterpretedGoal,
 )
-from .age import AgeProfile
+from .logging_utils import log_event
 
 
 # -------------------------
@@ -45,6 +45,10 @@ _planner = CosmeticPlannerAgent(engine=_engine, llm_client=None)
 
 @app.get("/health")
 def health() -> dict:
+    """
+    Simple health endpoint to verify the service is up.
+    """
+    log_event("health_check", extra={"endpoint": "/health"})
     return {
         "status": "ok",
         "engine_twin_loaded": _engine.twin_loaded,
@@ -65,6 +69,14 @@ def plan_cosmetic_stack(payload: PlanRequest):
     - Recommends a cosmetic stack for that user
     - Simulates the cosmetic effect
     """
+    log_event(
+        "plan_request",
+        extra={
+            "endpoint": "/plan",
+            "age_years": payload.user.age_years,
+        },
+    )
+
     try:
         user_info = payload.user
 
@@ -81,6 +93,7 @@ def plan_cosmetic_stack(payload: PlanRequest):
             request_text=payload.request_text,
         )
 
+        # Extract and normalize simulation section into pydantic model
         sim = plan_dict["simulation"]
         agg = sim["aggregated_effect"]
 
@@ -115,9 +128,27 @@ def plan_cosmetic_stack(payload: PlanRequest):
         )
 
     except CosDenError as exc:
-        # Known CosDenOS errors → 400
+        # Known CosDenOS errors → 400-series to the caller
+        log_event(
+            "plan_request_error",
+            level="WARN",
+            extra={
+                "endpoint": "/plan",
+                "error": str(exc),
+                "age_years": payload.user.age_years,
+            },
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     except Exception as exc:  # pragma: no cover - generic guardrail
+        log_event(
+            "plan_request_error_internal",
+            level="ERROR",
+            extra={
+                "endpoint": "/plan",
+                "error": str(exc),
+            },
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
@@ -131,8 +162,18 @@ def simulate_stack(payload: SimulateRequest):
     Lower-level endpoint: directly simulate a given product code stack
     for a user, without natural-language planning.
     """
+    log_event(
+        "simulate_request",
+        extra={
+            "endpoint": "/simulate",
+            "age_years": payload.user.age_years,
+            "codes": payload.codes,
+        },
+    )
+
     try:
         user_info = payload.user
+
         user_profile = CosmeticUserProfile.from_age(
             age_years=user_info.age_years,
             tone_preference=user_info.tone_preference,
@@ -171,6 +212,25 @@ def simulate_stack(payload: SimulateRequest):
         )
 
     except CosDenError as exc:
+        log_event(
+            "simulate_request_error",
+            level="WARN",
+            extra={
+                "endpoint": "/simulate",
+                "error": str(exc),
+                "age_years": payload.user.age_years,
+                "codes": payload.codes,
+            },
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     except Exception as exc:  # pragma: no cover
+        log_event(
+            "simulate_request_error_internal",
+            level="ERROR",
+            extra={
+                "endpoint": "/simulate",
+                "error": str(exc),
+            },
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
