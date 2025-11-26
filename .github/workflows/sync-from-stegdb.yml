@@ -1,0 +1,63 @@
+name: Sync CosDen Files From StegDB
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 6 * * *"   # optional: run daily at 06:00 UTC
+
+jobs:
+  sync-from-stegdb:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout CosDen repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout StegDB canonical repo
+        uses: actions/checkout@v4
+        with:
+          repository: StegVerse/StegDB
+          path: stegdb
+          fetch-depth: 0
+
+      - name: Copy canonical CosDen files from StegDB
+        run: |
+          # Copy API and helper files
+          mkdir -p src/CosDenOS
+          cp stegdb/canonical/cosden/src/CosDenOS/api.py src/CosDenOS/api.py
+          cp stegdb/canonical/cosden/src/CosDenOS/api_models.py src/CosDenOS/api_models.py
+          cp stegdb/canonical/cosden/src/CosDenOS/logging_utils.py src/CosDenOS/logging_utils.py
+          cp stegdb/canonical/cosden/src/CosDenOS/stegcore_integration.py src/CosDenOS/stegcore_integration.py
+
+          # Copy validator
+          mkdir -p tools
+          cp stegdb/canonical/cosden/tools/validate_cosden_structure.py tools/validate_cosden_structure.py
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal deps for validation
+        run: |
+          python -m pip install --upgrade pip
+          pip install pydantic fastapi uvicorn
+
+      - name: Run CosDen validator
+        run: |
+          python tools/validate_cosden_structure.py
+
+      - name: Create pull request with synced changes
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "Sync CosDen canonical files from StegDB"
+          title: "Sync CosDen files from StegDB"
+          body: "This PR syncs CosDen canonical files from StegDB/canonical/cosden."
+          branch: "sync/stegdb-cosden"
+          labels: "sync,auto"
