@@ -16,6 +16,18 @@ Modes:
       - Writes meta/files.jsonl
       - Writes validation_stamp.json with highest_mode updated to "prod" for this commit
 
+Hybrid root rules (for BOTH modes):
+  Allowed dirs at root:
+    - src, tools, .github, docs, tests, scripts
+    - meta, .git, stegdb are specially handled/ignored
+
+  Allowed files at root:
+    - Dockerfile, pyproject.toml, README.md, LICENSE
+
+Anything else at root:
+  - build mode: WARNING only
+  - prod mode: ERROR (blocks publish)
+
 Highest-mode behavior:
 - Stamp contains: repo, commit, highest_mode, meta_sha256, validated_at
 - For a given commit:
@@ -24,15 +36,6 @@ Highest-mode behavior:
         - If new mode is stronger (prod > build) → upgrade highest_mode
         - If new mode is weaker (build after prod) → keep highest_mode=prod
     - If stamp for different commit → overwrite for new commit
-
-Publish workflows will later require:
-- stamp.commit   == current commit SHA
-- stamp.mode     == "prod" (or stamp.highest_mode == "prod")
-
-Usage:
-
-    python tools/validate_cosden_structure.py
-    python tools/validate_cosden_structure.py --mode=prod
 """
 
 import argparse
@@ -54,6 +57,13 @@ REQUIRED_ROOT_DIRS = {
     ".github",
 }
 
+# Allowed root dirs (no errors or warnings in either mode)
+ALLOWED_ROOT_DIRS = REQUIRED_ROOT_DIRS.union({
+    "docs",
+    "tests",
+    "scripts",
+})
+
 # Always-ignored root entries
 IGNORED_ROOT_DIRS = {
     ".git",
@@ -64,20 +74,14 @@ IGNORED_ROOT_DIRS = {
 
 IGNORED_ROOT_FILES = {
     ".gitignore",
+}
+
+# Allowed files at root (no warnings in either mode)
+ALLOWED_ROOT_FILES = {
+    "Dockerfile",
+    "pyproject.toml",
     "README.md",
-}
-
-# Files we know about and are OK with living at root (in build mode)
-ALLOWED_EXTRA_ROOT_FILES = {
-    "cosden_init_full.sh",
-    "setup_cosden_structure.sh",
-    "COSDEN_MASTER_SPEC.md",
-    "Architecture.txt",
-}
-
-ALLOWED_EXTRA_ROOT_DIRS = {
-    "docs",
-    "tests",
+    "LICENSE",
 }
 
 # Required files relative to repo root
@@ -177,9 +181,9 @@ def import_check() -> bool:
     return True
 
 
-def validate_structure(mode: str) -> int:
+def validate_structure(mode: str) -> tuple[int, str]:
     """
-    Returns number of structural issues (0 means clean for given mode).
+    Returns (number_of_issues, meta_hash).
     """
     errors = 0
 
@@ -220,22 +224,17 @@ def validate_structure(mode: str) -> int:
     for child in REPO_ROOT.iterdir():
         name = child.name
         if child.is_dir():
-            if name in REQUIRED_ROOT_DIRS:
+            if name in ALLOWED_ROOT_DIRS:
                 continue
             if name in IGNORED_ROOT_DIRS:
                 continue
-            if name in ALLOWED_EXTRA_ROOT_DIRS:
-                # allowed in build mode; in prod we may treat as unexpected
-                unexpected_items.append(f"directory: {name}")
-            else:
-                unexpected_items.append(f"directory: {name}")
+            unexpected_items.append(f"directory: {name}")
         else:
             if name in IGNORED_ROOT_FILES:
                 continue
-            if name in ALLOWED_EXTRA_ROOT_FILES:
-                unexpected_items.append(f"file: {name}")
-            else:
-                unexpected_items.append(f"file: {name}")
+            if name in ALLOWED_ROOT_FILES:
+                continue
+            unexpected_items.append(f"file: {name}")
 
     if not unexpected_items:
         print("  ✓ OK")
