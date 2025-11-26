@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, HTTPException
 
 from . import CosDenOS
@@ -16,6 +18,19 @@ from .api_models import (
     InterpretedGoal,
 )
 from .logging_utils import log_event
+from .stegcore_integration import (
+    initialize_stegcore_integration,
+    send_stegcore_heartbeat,
+)
+
+
+# -------------------------
+# StegCore integration config
+# -------------------------
+
+COSDEN_NODE_NAME = os.getenv("COSDEN_NODE_NAME", "CosDenOS")
+COSDEN_VERSION = os.getenv("COSDEN_VERSION", "0.1.0")
+COSDEN_PUBLIC_ENDPOINT = os.getenv("COSDEN_PUBLIC_ENDPOINT", "")
 
 
 # -------------------------
@@ -24,7 +39,7 @@ from .logging_utils import log_event
 
 app = FastAPI(
     title="CosDenOS Cosmetic Engine API",
-    version="0.1.0",
+    version=COSDEN_VERSION,
     description=(
         "CosDenOS cosmetic-only engine + StegVerse AI Cosmetic Planner.\n\n"
         "Important: This API is cosmetic-only and does not diagnose, treat, "
@@ -38,6 +53,13 @@ _engine.load_default_catalog()
 # Planner with no external LLM client yet (rule-based interpretation).
 _planner = CosmeticPlannerAgent(engine=_engine, llm_client=None)
 
+# Initialize StegCore integration (no-op if stegcore is not installed).
+initialize_stegcore_integration(
+    node_name=COSDEN_NODE_NAME,
+    version=COSDEN_VERSION,
+    endpoint=COSDEN_PUBLIC_ENDPOINT or None,
+)
+
 
 # -------------------------
 # Health check
@@ -47,12 +69,22 @@ _planner = CosmeticPlannerAgent(engine=_engine, llm_client=None)
 def health() -> dict:
     """
     Simple health endpoint to verify the service is up.
+    Also sends a heartbeat to StegCore if integration is available.
     """
     log_event("health_check", extra={"endpoint": "/health"})
+
+    # Heartbeat into StegCore, if enabled.
+    send_stegcore_heartbeat(
+        version=COSDEN_VERSION,
+        endpoint=COSDEN_PUBLIC_ENDPOINT or None,
+    )
+
     return {
         "status": "ok",
         "engine_twin_loaded": _engine.twin_loaded,
         "cosmetic_only": True,
+        "node": COSDEN_NODE_NAME,
+        "version": COSDEN_VERSION,
     }
 
 
