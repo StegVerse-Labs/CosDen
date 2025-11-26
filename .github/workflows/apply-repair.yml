@@ -24,9 +24,6 @@ jobs:
           path: stegdb
           fetch-depth: 0
 
-      # -----------------------------------------------------
-      # Check for existence of the repair plan BEFORE loading
-      # -----------------------------------------------------
       - name: Check for repair plan
         id: check_plan
         run: |
@@ -42,14 +39,11 @@ jobs:
           echo "✔ No repair plan found — CosDen is already canonical."
           exit 0
 
-      # -----------------------------------------------------
-      # Apply the repair plan (only if found)
-      # -----------------------------------------------------
       - name: Apply repair plan
         if: steps.check_plan.outputs.found == 'true'
         run: |
           python - << 'PY'
-          import json, shutil, pathlib
+          import json, pathlib, shutil
 
           repo_root = pathlib.Path(".").resolve()
           stegdb_root = repo_root / "stegdb"
@@ -58,25 +52,39 @@ jobs:
           with plan_path.open("r", encoding="utf-8") as f:
               plan = json.load(f)
 
-          canonical_root = stegdb_root / plan["canonical_root"]
-
-          for action in plan["actions"]:
-              if action.get("type") != "write_file":
-                  continue
-              rel = action["canonical_relpath"]
-              target = action["target_path"]
-
-              src = canonical_root / rel
-              dst = repo_root / target
-
-              print(f"Applying: {rel} -> {target}")
-              dst.parent.mkdir(parents=True, exist_ok=True)
-              shutil.copy2(src, dst)
+          actions = plan.get("actions", [])
+          if not actions:
+              print("No actions in repair plan; nothing to do.")
+          else:
+              print(f"Applying {len(actions)} repair actions...")
+          
+          for action in actions:
+              atype = action.get("type")
+              if atype == "move_file":
+                  src_rel = action["from"]
+                  dst_rel = action["to"]
+                  src = repo_root / src_rel
+                  dst = repo_root / dst_rel
+                  print(f" - move_file: {src_rel} -> {dst_rel}")
+                  if not src.exists():
+                      print(f"   ⚠ Source does not exist, skipping: {src_rel}")
+                      continue
+                  dst.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.move(str(src), str(dst))
+              elif atype == "write_file":
+                  # keep previous behavior if we ever use canonical exports
+                  canonical_root = stegdb_root / plan["canonical_root"]
+                  rel = action["canonical_relpath"]
+                  target = action["target_path"]
+                  src = canonical_root / rel
+                  dst = repo_root / target
+                  print(f" - write_file: {rel} -> {target}")
+                  dst.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(src, dst)
+              else:
+                  print(f"   ⚠ Unknown action type: {atype} (ignoring)")
           PY
 
-      # -----------------------------------------------------
-      # Validation
-      # -----------------------------------------------------
       - name: Set up Python for validation
         uses: actions/setup-python@v5
         with:
@@ -87,9 +95,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install pydantic fastapi uvicorn
 
-      - name: Run CosDen validator
+      - name: Run CosDen validator (build mode)
+        env:
+          GITHUB_SHA: ${{ github.sha }}
         run: |
-          python tools/validate_cosden_structure.py
+          python tools/validate_cosden_structure.py --mode=build
 
       - name: Create pull request with repairs
         if: steps.check_plan.outputs.found == 'true'
