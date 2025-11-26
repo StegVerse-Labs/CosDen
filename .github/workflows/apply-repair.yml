@@ -1,0 +1,92 @@
+name: Apply Repair Plan From StegDB
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  apply-repair:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout CosDen repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout StegDB
+        uses: actions/checkout@v4
+        with:
+          repository: StegVerse/StegDB
+          path: stegdb
+          fetch-depth: 0
+
+      - name: Check for repair plan
+        id: check_plan
+        run: |
+          if [ -f stegdb/repairs/CosDen/repair_plan.json ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Abort if no repair plan
+        if: steps.check_plan.outputs.found == 'false'
+        run: |
+          echo "No repair plan found at stegdb/repairs/CosDen/repair_plan.json"
+          echo "Nothing to apply."
+          exit 0
+
+      - name: Apply repair plan
+        run: |
+          python - << 'PY'
+          import json, shutil, pathlib
+
+          repo_root = pathlib.Path(".").resolve()
+          stegdb_root = repo_root / "stegdb"
+
+          plan_path = stegdb_root / "repairs" / "CosDen" / "repair_plan.json"
+          with plan_path.open("r", encoding="utf-8") as f:
+              plan = json.load(f)
+
+          canonical_root = stegdb_root / plan["canonical_root"]
+
+          for action in plan["actions"]:
+              if action["type"] != "write_file":
+                  continue
+              canonical_rel = action["canonical_relpath"]
+              target_rel = action["target_path"]
+
+              src = canonical_root / canonical_rel
+              dst = repo_root / target_rel
+
+              print(f"Applying: {canonical_rel} -> {target_rel}")
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, dst)
+          PY
+
+      - name: Set up Python for validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal deps for validation
+        run: |
+          python -m pip install --upgrade pip
+          pip install pydantic fastapi uvicorn
+
+      - name: Run CosDen validator
+        run: |
+          python tools/validate_cosden_structure.py
+
+      - name: Create pull request with repairs
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "Apply StegDB repair plan"
+          title: "Apply StegDB repair plan"
+          body: "This PR applies canonical file repairs as defined in StegDB/repairs/CosDen/repair_plan.json."
+          branch: "repair/from-stegdb"
+          labels: "repair,auto"
