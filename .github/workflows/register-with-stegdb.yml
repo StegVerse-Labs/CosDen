@@ -1,0 +1,50 @@
+name: Register with StegDB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+
+    env:
+      STEGDB_REPO: StegVerse-Labs/StegDB
+
+    steps:
+      - name: Checkout CosDen (this repo)
+        uses: actions/checkout@v4
+
+      - name: Checkout StegDB
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STEGDB_REPO }}
+          path: stegdb
+          token: ${{ secrets.STEGDB_REGISTRY_PAT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Register CosDen in StegDB registry
+        working-directory: stegdb
+        run: |
+          python tools/register_repo.py \
+            --name CosDen \
+            --path CosDen \
+            --canonical canonical/cosden
+
+      - name: Commit and push registry update
+        working-directory: stegdb
+        run: |
+          git config user.name "stegdb-bot"
+          git config user.email "stegdb-bot@users.noreply.github.com"
+          git add registry/repos.json
+          if git diff --cached --quiet; then
+            echo "No registry changes to commit."
+          else
+            git commit -m "Auto-register CosDen from workflow"
+            git push origin main
+          fi
