@@ -1,25 +1,29 @@
 name: CosDen Docker Build (PROD-gated)
 
 on:
+  # Manual run
   workflow_dispatch:
+
+  # Auto-run on changes to core CosDen sources or Dockerfile
   push:
-    branches:
-      - main
+    branches: [ main ]
     paths:
       - "Dockerfile"
       - "src/**"
       - ".github/workflows/cosden-docker.yml"
 
-jobs:
-  stegguard:
-    name: StegGuard – verify StegDB dependency status
-    uses: ./.github/workflows/stegguard-prod-gate.yml
-    with:
-      stegdb_repo: StegVerse/StegDB
-      stegdb_ref: main
+permissions:
+  contents: read
 
+jobs:
+  # 🔒 Global cluster gate, lives in StegBrain
+  stegguard:
+    name: StegBrain prod gate
+    uses: StegVerse-Labs/StegBrain/.github/workflows/stegbrain-gate.yml@main
+
+  # 🧪 Lightweight build that only runs if StegBrain allows it
   build:
-    name: Build (and optionally push) CosDen Docker image
+    name: Build CosDen Docker image
     needs: stegguard
     runs-on: ubuntu-latest
 
@@ -27,19 +31,24 @@ jobs:
       - name: Checkout CosDen
         uses: actions/checkout@v4
 
-      # 🔐 TODO: replace with your real registry login
-      - name: Log in to Docker registry
+      # Optional: very cheap Python syntax check
+      - name: Quick Python sanity check
         run: |
-          echo "TODO: implement 'docker login' with your registry credentials."
-          echo "This is a placeholder so the workflow is syntactically valid."
+          if [ -d "src" ]; then
+            python -m compileall src || {
+              echo "Python syntax errors detected."
+              exit 1
+            }
+          else
+            echo "No src/ directory found; skipping compile check."
+          fi
 
-      - name: Build Docker image
-        run: |
-          echo "🏗️ Building CosDen Docker image..."
-          docker build -t cosden:latest .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      # 🔐 TODO: replace with real push command (or remove if not needed yet)
-      - name: Push Docker image
-        run: |
-          echo "TODO: implement 'docker push' once registry details are ready."
-          echo "For now this step is a harmless placeholder."
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: cosden:prod-gated-test
