@@ -1,0 +1,51 @@
+name: StegGuard Prod Gate
+
+on:
+  workflow_call:
+    inputs:
+      repo_name:
+        required: true
+        type: string
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout StegDB
+        uses: actions/checkout@v4
+        with:
+          repository: StegVerse-Labs/StegDB
+          path: stegdb
+
+      - name: Check dependency status
+        run: |
+          python - << 'PY'
+          import json
+          from pathlib import Path
+          status_path = Path("stegdb/meta/dependency_status.json")
+          if not status_path.exists():
+              raise SystemExit("dependency_status.json missing; StegDB full cycle hasn't run.")
+
+          data = json.loads(status_path.read_text(encoding="utf-8"))
+          repo_name = "${{ inputs.repo_name }}"
+          repos = data.get("repos", {})
+          if repo_name not in repos:
+              raise SystemExit(f"Repo {repo_name} not found in dependency_status.json")
+
+          info = repos[repo_name]
+          self_status = info.get("self_status")
+          deps_ok = info.get("deps_ok")
+          problems = info.get("problems", [])
+
+          print(f"Repo: {repo_name}")
+          print(f"self_status={self_status}, deps_ok={deps_ok}")
+          if problems:
+              print("Problems:")
+              for p in problems:
+                  print(f" - {p}")
+
+          if self_status != "prod" or not deps_ok:
+              raise SystemExit("❌ StegGuard: repo not safe for production.")
+          print("✅ StegGuard: repo safe for production.")
+          PY
