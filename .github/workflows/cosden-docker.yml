@@ -3,21 +3,23 @@ name: CosDen Docker Build (PROD-gated)
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
-
-permissions:
-  contents: read
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - "src/**"
+      - ".github/workflows/cosden-docker.yml"
 
 jobs:
-  # 🔒 StegGuard — checks StegDB dependency_status.json
-  # and blocks deploy if CosDen is not PROD-safe.
   stegguard:
+    name: StegGuard – verify StegDB dependency status
     uses: ./.github/workflows/stegguard-prod-gate.yml
     with:
-      repo_name: CosDen
+      stegdb_repo: StegVerse/StegDB
+      stegdb_ref: main
 
-  # 🚀 Only runs if StegGuard passes
-  docker-build:
+  build:
+    name: Build (and optionally push) CosDen Docker image
     needs: stegguard
     runs-on: ubuntu-latest
 
@@ -25,33 +27,19 @@ jobs:
       - name: Checkout CosDen
         uses: actions/checkout@v4
 
-      # Optional: if you need Python for tests or tooling, keep this.
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 🧱 Build Docker image (local only – no push yet)
-      - name: Build CosDen Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: false
-          tags: |
-            cosden:latest
-
-      # ✅ Optional sanity check – run container and exit
-      - name: Run container smoke test
+      # 🔐 TODO: replace with your real registry login
+      - name: Log in to Docker registry
         run: |
-          docker run --rm cosden:latest echo "CosDen container started OK"
+          echo "TODO: implement 'docker login' with your registry credentials."
+          echo "This is a placeholder so the workflow is syntactically valid."
 
-      # 📦 Placeholder for real deploy step (registry / Render / etc.)
-      # When you're ready to actually publish, add your push/deploy
-      # commands below this comment, still in the docker-build job.
-      - name: Deploy placeholder
+      - name: Build Docker image
         run: |
-          echo "✅ CosDen Docker image built successfully (no deploy configured yet)."
+          echo "🏗️ Building CosDen Docker image..."
+          docker build -t cosden:latest .
+
+      # 🔐 TODO: replace with real push command (or remove if not needed yet)
+      - name: Push Docker image
+        run: |
+          echo "TODO: implement 'docker push' once registry details are ready."
+          echo "For now this step is a harmless placeholder."
