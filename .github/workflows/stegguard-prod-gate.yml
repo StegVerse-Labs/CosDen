@@ -3,52 +3,98 @@ name: StegGuard Prod Gate
 on:
   workflow_call:
     inputs:
-      stegdb_repo:
-        description: "StegDB repo to read dependency_status.json from"
-        required: false
+      repo_name:
+        description: "Name of the repo as recorded in StegDB (e.g. CosDen)"
+        required: true
         type: string
-        default: StegVerse/StegDB
-      stegdb_ref:
-        description: "Ref (branch/tag) of StegDB to use"
-        required: false
-        type: string
-        default: main
 
 jobs:
   guard:
-    name: Check StegDB dependency status
+    name: StegGuard / Prod Gate
     runs-on: ubuntu-latest
+
+    env:
+      REPO_NAME: ${{ inputs.repo_name }}
 
     steps:
       - name: Checkout StegDB
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.stegdb_repo }}
-          ref: ${{ inputs.stegdb_ref }}
-          path: stegdb
-          token: ${{ secrets.GH_STEGVERSE_AI_TOKEN }}
+          repository: StegVerse/StegDB
+          ref: main
+          path: StegDB
 
-      - name: Show StegDB tree (debug)
+      - name: Verify dependency status from StegDB
+        working-directory: StegDB
         run: |
-          echo "Listing StegDB repo contents:"
-          ls -R
+          set -euo pipefail
 
-      - name: Verify dependency_status.json exists
-        run: |
-          STATUS_FILE="stegdb/meta/dependency_status.json"
+          STATUS_FILE="meta/dependency_status.json"
 
           if [ ! -f "$STATUS_FILE" ]; then
-            echo "::error::dependency_status.json missing; StegDB full cycle hasn't run."
-            echo "Expected path: $STATUS_FILE"
+            echo "::error::StegGuard: ${STATUS_FILE} missing. StegDB full-cycle has not produced dependency status. Failing closed."
             exit 1
           fi
 
-          echo "✅ Found $STATUS_FILE"
-          echo "====== dependency_status.json ======"
-          cat "$STATUS_FILE"
-          echo
-          echo "===================================="
+          python - << 'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
 
-          # NOTE: for now we only require that the file exists.
-          # If you later want to hard-fail based on contents,
-          # we can parse JSON here (e.g., with jq or python).
+          repo_name = os.environ["REPO_NAME"]
+          status_path = pathlib.Path("meta") / "dependency_status.json"
+
+          # --- Load & parse status file ---
+          try:
+              data = json.loads(status_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"StegGuard: unable to parse {status_path}: {exc}")
+              sys.exit(1)
+
+          # --- Global overall_status check ---
+          overall = data.get("overall_status")
+          if overall != "ok":
+              print(f"StegGuard: overall_status is {overall!r}, expected 'ok'. Failing.")
+              issues = data.get("issues") or []
+              if issues:
+                  print("Global issues:")
+                  for issue in issues:
+                      print(" -", issue)
+              sys.exit(1)
+
+          # --- Per-repo status check ---
+          repos = data.get("repos") or {}
+          repo = repos.get(repo_name)
+          if not repo:
+              print(f"StegGuard: repo {repo_name!r} not present in dependency_status.json. Failing.")
+              sys.exit(1)
+
+          if repo.get("status") != "ok":
+              print(f"StegGuard: repo {repo_name!r} status is {repo.get('status')!r}, expected 'ok'. Failing.")
+              issues = repo.get("issues") or []
+              if issues:
+                  print("Repo issues:")
+                  for issue in issues:
+                      print(" -", issue)
+              sys.exit(1)
+
+          # --- Ensure the status belongs to THIS StegDB commit ---
+          recorded_sha = data.get("stegdb_full_cycle_sha")
+          try:
+              current_sha = subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"],
+                  text=True,
+              ).strip()
+          except Exception as exc:
+              print("StegGuard: unable to determine current StegDB commit sha:", exc)
+              sys.exit(1)
+
+          if recorded_sha and recorded_sha != current_sha:
+              print(f"StegGuard: dependency_status.json was generated at StegDB sha {recorded_sha},")
+              print(f"           but the current StegDB checkout is {current_sha}. Failing to avoid stale decisions.")
+              sys.exit(1)
+
+          print(f"StegGuard: repo {repo_name!r} passes prod gate with overall_status 'ok' at sha {recorded_sha}.")
+          PY
