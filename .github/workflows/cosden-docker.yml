@@ -1,4 +1,4 @@
-name: CosDen Docker Build & Deploy (PROD-gated)
+name: CosDen Docker Build (PROD-gated)
 
 on:
   # Manual run
@@ -27,9 +27,6 @@ jobs:
     needs: stegguard
     runs-on: ubuntu-latest
 
-    outputs:
-      image_tag: ${{ steps.metadata.outputs.image_tag }}
-
     steps:
       - name: Checkout CosDen
         uses: actions/checkout@v4
@@ -37,7 +34,6 @@ jobs:
       - name: Compute image tag
         id: metadata
         run: |
-          # You can tweak this tag scheme if you want
           SHORT_SHA="${GITHUB_SHA::7}"
           TAG="cosden:${SHORT_SHA}"
           echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -63,76 +59,3 @@ jobs:
           context: .
           push: false
           tags: ${{ steps.metadata.outputs.image_tag }}
-
-  # 🚀 3) Deploy / Push image (customize this section)
-  deploy:
-    name: Deploy CosDen image
-    needs: build
-    runs-on: ubuntu-latest
-
-    # Optional: tie to a GitHub environment called "production" for manual approval
-    # environment: production
-
-    steps:
-      - name: Checkout CosDen
-        uses: actions/checkout@v4
-
-      - name: Log metadata
-        run: |
-          echo "Image tag from build: ${{ needs.build.outputs.image_tag }}"
-
-      # 🔐 TODO: Customize this block for your real registry
-      # Example: Docker Hub, GHCR, Render private registry, etc.
-      #
-      # 1) Make sure you have a repo-level secret like:
-      #    - DOCKER_USERNAME
-      #    - DOCKER_PASSWORD or DOCKER_TOKEN
-      #
-      # 2) Replace 'your-registry.example.com/your-namespace/cosden'
-      #    with your real image name.
-      #
-      - name: Log in to container registry
-        env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-        run: |
-          if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_PASSWORD" ]; then
-            echo "❌ DOCKER_USERNAME or DOCKER_PASSWORD not set; skipping push."
-            exit 1
-          fi
-
-          echo "$DOCKER_PASSWORD" | docker login \
-            --username "$DOCKER_USERNAME" \
-            --password-stdin
-
-      - name: Pull image from build job
-        run: |
-          # Rebuild the same tag locally to push it; this is cheap because build cache may not be shared.
-          SHORT_SHA="${GITHUB_SHA::7}"
-          TAG="cosden:${SHORT_SHA}"
-          echo "Rebuilding image with tag $TAG for push..."
-          docker build -t "$TAG" .
-
-      - name: Tag & push image
-        run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          LOCAL_TAG="cosden:${SHORT_SHA}"
-
-          # 🔁 CHANGE THIS to your real registry destination
-          REGISTRY_IMAGE="your-registry.example.com/your-namespace/cosden:${SHORT_SHA}"
-
-          echo "Tagging $LOCAL_TAG as $REGISTRY_IMAGE"
-          docker tag "$LOCAL_TAG" "$REGISTRY_IMAGE"
-
-          echo "Pushing $REGISTRY_IMAGE"
-          docker push "$REGISTRY_IMAGE"
-
-      # 📝 If you deploy to a PaaS (Render, Fly.io, etc.), trigger it here
-      # Example placeholder:
-      #
-      # - name: Trigger Render deploy
-      #   run: |
-      #     curl -X POST \
-      #       -H "Accept: application/json" \
-      #       -H "Authorization: Bearer ${{ secrets.RENDER_HOOK_TOKEN }}" \
-      #       https://api.render.com/deploy/somedeployhook
